@@ -260,12 +260,16 @@ def create_network(blocks):
 def load_conv(buf, start, layer, bias):
     if bias:
         num_b = layer.bias.data.cpu().numpy().size
-        num_w = layer.weight.data.cpu().numpy().size
         layer.bias.data=torch.from_numpy(buf[start:start+num_b]).cuda();   start = start + num_b
-        layer.weight.data=torch.from_numpy(buf[start:start+num_w]).cuda(); start = start + num_w
+        num_w = layer.weight.data.cpu().numpy().size
+        shape_w = layer.weight.data.cpu().numpy().shape
+        weight = buf[start:start+num_w].reshape(shape_w)
+        layer.weight.data = torch.from_numpy(weight).cuda();   start = start + num_w 
     else:
-        num_w = layer.weight.numel()
-        layer.weight.data=torch.from_numpy(buf[start:start+num_w]).cuda(); start = start + num_w
+        num_w = layer.weight.data.cpu().numpy().size
+        shape_w = layer.weight.data.cpu().numpy().shape
+        weight = buf[start:start+num_w].reshape(shape_w)
+        layer.weight.data = torch.from_numpy(weight).cuda();   start = start + num_w 
     return start
 
 def load_bn(buf, start, layer):
@@ -278,9 +282,11 @@ def load_bn(buf, start, layer):
 
 def load_fc(buf, start, layer):
     num_b = layer.bias.data.cpu().numpy().size
-    num_w = layer.weight.data.cpu().numpy().size
     layer.bias.data = torch.from_numpy(buf[start:start+num_b]).cuda();     start = start + num_b
-    layer.weight.data = torch.from_numpy(buf[start:start+num_w]).cuda();   start = start + num_w 
+    num_w = layer.weight.data.cpu().numpy().size
+    shape_w = layer.weight.data.cpu().numpy().shape
+    weight = buf[start:start+num_w].reshape(shape_w)
+    layer.weight.data = torch.from_numpy(weight).cuda();   start = start + num_w 
     return start
 
 def load_weight(model, weightfile):
