@@ -139,7 +139,7 @@ def create_network(blocks):
                 layers += [nn.Conv2d(prev_filters, filters, kernel_size,stride, pad, bias=False)]
                 layers += [nn.BatchNorm2d(filters)]
             else:
-                layers += [nn.Conv2d(prev_filters, filters, kernel_size,stride, pad, bias=False)]
+                layers += [nn.Conv2d(prev_filters, filters, kernel_size,stride, pad, bias=True)]
             if activation == 'leaky':
                 layers += [nn.LeakyReLU(0.1)]
             elif activation == 'relu':
@@ -231,17 +231,17 @@ def create_network(blocks):
                 else:
                     layers +=  [nn.Linear(prev_filters, filters)]
 
-        elif block['activation'] == 'leaky':
-            if is_first:
-                layers += [nn.Sequential(FCView(),nn.Linear(prev_filters, filters),nn.LeakyReLU(0.1, inplace=True))]
-            else:
-                layers +=  [nn.Sequential(nn.Linear(prev_filters, filters),nn.LeakyReLU(0.1, inplace=True))]
+            elif block['activation'] == 'leaky':
+                if is_first:
+                    layers += [nn.Sequential(FCView(),nn.Linear(prev_filters, filters),nn.LeakyReLU(0.1, inplace=True))]
+                else:
+                    layers +=  [nn.Sequential(nn.Linear(prev_filters, filters),nn.LeakyReLU(0.1, inplace=True))]
 
-        elif block['activation'] == 'relu':
-            if is_first:
-                layers +=  [nn.Sequential(FCView(),nn.Linear(prev_filters, filters),nn.ReLU(inplace=True))]
-            else:
-                layers +=  [nn.Sequential(nn.Linear(prev_filters, filters),nn.ReLU(inplace=True))]
+            elif block['activation'] == 'relu':
+                if is_first:
+                    layers +=  [nn.Sequential(FCView(),nn.Linear(prev_filters, filters),nn.ReLU(inplace=True))]
+                else:
+                    layers +=  [nn.Sequential(nn.Linear(prev_filters, filters),nn.ReLU(inplace=True))]
             prev_filters = filters
             prev_width = 1
             prev_height = 1
@@ -257,19 +257,13 @@ def create_network(blocks):
 
     return nn.Sequential(*layers)
 
-def load_conv(buf, start, layer, bias):
-    if bias:
-        num_b = layer.bias.data.cpu().numpy().size
-        layer.bias.data=torch.from_numpy(buf[start:start+num_b]).cuda();   start = start + num_b
-        num_w = layer.weight.data.cpu().numpy().size
-        shape_w = layer.weight.data.cpu().numpy().shape
-        weight = buf[start:start+num_w].reshape(shape_w)
-        layer.weight.data = torch.from_numpy(weight).cuda();   start = start + num_w 
-    else:
-        num_w = layer.weight.data.cpu().numpy().size
-        shape_w = layer.weight.data.cpu().numpy().shape
-        weight = buf[start:start+num_w].reshape(shape_w)
-        layer.weight.data = torch.from_numpy(weight).cuda();   start = start + num_w 
+def load_conv(buf, start, layer):
+    num_b = layer.bias.data.cpu().numpy().size
+    layer.bias.data=torch.from_numpy(buf[start:start+num_b]).cuda();   start = start + num_b
+    num_w = layer.weight.data.cpu().numpy().size
+    shape_w = layer.weight.data.cpu().numpy().shape
+    weight = buf[start:start+num_w].reshape(shape_w)
+    layer.weight.data = torch.from_numpy(weight).cuda();   start = start + num_w 
     return start
 
 def load_bn(buf, start, layer):
@@ -278,6 +272,19 @@ def load_bn(buf, start, layer):
     layer.weight.data = torch.from_numpy(buf[start:start+num_b]).cuda();      start = start + num_b
     layer.running_mean.data = torch.from_numpy(buf[start:start+num_b]).cuda();start = start + num_b
     layer.running_var.data = torch.from_numpy(buf[start:start+num_b]).cuda(); start = start + num_b
+    return start
+
+def load_conv_bn(buf, start, conv_layer, bn_layer):
+
+    num_b = bn_layer.bias.data.cpu().numpy().size
+    bn_layer.bias.data = torch.from_numpy(buf[start:start+num_b]).cuda();        start = start + num_b
+    bn_layer.weight.data = torch.from_numpy(buf[start:start+num_b]).cuda();      start = start + num_b
+    bn_layer.running_mean.data = torch.from_numpy(buf[start:start+num_b]).cuda();start = start + num_b
+    bn_layer.running_var.data = torch.from_numpy(buf[start:start+num_b]).cuda(); start = start + num_b
+    
+    num_w = conv_layer.weight.data.cpu().numpy().size
+    weight = buf[start:start+num_w].reshape(conv_layer.weight.data.cpu().numpy().shape)
+    conv_layer.weight.data = torch.from_numpy(weight).cuda();   start = start + num_w 
     return start
 
 def load_fc(buf, start, layer):
@@ -293,7 +300,6 @@ def load_weight(model, weightfile):
     fp = open(weightfile, 'rb')
     header = np.fromfile(fp, count=4, dtype=np.int32)
     header = torch.from_numpy(header)
-    seen = header[3]
     buf = np.fromfile(fp, dtype = np.float32)
     fp.close()
     
@@ -303,17 +309,17 @@ def load_weight(model, weightfile):
         if isinstance(layer, nn.Conv2d):
             _,layer_next = model._modules.items()[int(layer_index)+1]
             if isinstance(layer_next, nn.BatchNorm2d):
-                start = load_bn(buf, start, layer_next)
-                start = load_conv(buf, start, layer, False)
+                start = load_conv_bn(buf,start,layer,layer_next)
                 print 'load ' + str(layer) + ' over'
                 print 'load ' + str(layer_next) + ' over'
                 
             else:
-                start = load_conv(buf, start, layer, layer.bias)
+                start = load_conv(buf, start, layer)
                 print 'load ' + str(layer) + ' over'
 
 blocks = parse_cfg(args.cfg)
 model = create_network(blocks)
 load_weight(model,args.weight)
+
 torch.save(model, '%s.pth'%args.cfg[:args.cfg.rfind('.')])
 print 'save model %s.pth '%args.cfg[:args.cfg.rfind('.')]
